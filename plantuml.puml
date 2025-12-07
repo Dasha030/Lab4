@@ -1,0 +1,135 @@
+@startuml Видача_книги_читачу_BPMN_стиль
+
+skinparam defaultFontName Arial
+skinparam backgroundColor #FFFFFF
+skinparam activity {
+  BackgroundColor #F0F8FF
+  BorderColor #4682B4
+  FontSize 12
+}
+
+skinparam note {
+  BackgroundColor #FFFACD
+  BorderColor #DAA520
+}
+
+|#E6E6FA|ЧИТАЧ|
+start
+floating note right
+  Початкова подія:
+  Читач має потребу в книзі
+end note
+
+:Прийти до бібліотеки;
+:Подати запит на видачу книги;
+
+if (Книга зарезервована раніше?) then (так)
+  :Надати MemberID та документи;
+  note right
+    Читач має мати
+    читацький квиток
+  end note
+else (ні)
+  :Надати MemberID та документи;
+endif
+
+:Назвати бажану книгу\n(ISBN або назва);
+
+|#E6E6FA|БІБЛІОТЕКАР|
+:Зустріти читача;
+:Ввести MemberID у систему;
+
+|#E6E6FA|СИСТЕМА|
+:Виконати запит:\n<code>SELECT * FROM Member\nWHERE MemberID = ?</code>|
+
+|#E6E6FA|БІБЛІОТЕКАР|
+if (Читач знайдений у БД?) then (ні)
+  #FF6B6B:Показати помилку:\n"❌ Читач не існує";
+  floating note right: Кінцева подія: Помилка
+  stop
+else (так)
+
+  :Переглянути профіль читача;
+
+  |#E6E6FA|СИСТЕМА|
+  :Виконати запит:\n<code>SELECT * FROM Fine\nWHERE MemberID = ?\nAND Status = 'Unpaid'</code>|
+
+  |#E6E6FA|БІБЛІОТЕКАР|
+  if (Є непогашені штрафи?) then (так)
+    :Попередити читача про штрафи\nта запропонувати погасити;
+    if (Читач погашає штрафи?) then (так)
+      :Прийняти оплату штрафів;
+
+      |#E6E6FA|СИСТЕМА|
+      :Виконати оновлення:\n<code>UPDATE Fine\nSET Status = 'Paid',\n    PaymentDate = CURRENT_DATE\nWHERE FineID = ?</code>|
+
+      |#E6E6FA|БІБЛІОТЕКАР|
+    else (ні)
+      note right
+        Читач продовжує
+        з неоплаченими штрафами
+      end note
+    endif
+  else (ні)
+  endif
+
+  :Ввести ISBN або назву книги;
+
+  |#E6E6FA|СИСТЕМА|
+  :Виконати запит:\n<code>SELECT CopyID, Condition\nFROM Copy\nWHERE BookID = (\n  SELECT BookID FROM Book\n  WHERE ISBN = ?\n)\nAND IsAvailable = TRUE\nLIMIT 1</code>|
+
+  |#E6E6FA|БІБЛІОТЕКАР|
+  if (Є вільні копії?) then (ні)
+    #FF6B6B:Повідомити читача:\n"❌ Всі копії на руках"\nЗапропонувати резервацію;
+    floating note right: Кінцева подія: Книга недоступна
+    stop
+  else (так)
+
+    :Створити запис позики;
+
+    |#E6E6FA|СИСТЕМА|
+    note right
+      Паралельні операції
+      Транзакція для збереження
+      цілісності даних
+    end note
+
+    split
+      :Створити позику:\n<code>INSERT INTO Loan\n(LoanID, MemberID, CopyID,\n LoanDate, DueDate)\nVALUES\n(NEXT_ID, ?, ?,\n CURRENT_DATE,\n CURRENT_DATE + 14)</code>]
+    split again
+      :Оновити статус копії:\n<code>UPDATE Copy\nSET IsAvailable = FALSE\nWHERE CopyID = ?</code>]
+    end split
+
+    :Синхронізація операцій;
+    :Згенерувати квитанцію\nз інформацією про позику;
+
+    note right
+      Квитанція містить:
+      - Назву книги
+      - Дату видачі
+      - Дату повернення (DueDate)
+      - Штрих-код
+    end note
+
+    |#E6E6FA|БІБЛІОТЕКАР|
+    :Роздрукувати квитанцію;
+    :Видати книгу та квитанцію читачу;
+
+    |#E6E6FA|ЧИТАЧ|
+    :Отримати книгу на руки;
+    :Отримати квитанцію з датою повернення;
+
+    |#E6E6FA|СИСТЕМА|
+    note right
+      ⏰ Таймер-подія:
+      Через 13 днів після видачі
+    end note
+
+    :Відправити SMS-нагадування:\n"Не забудьте повернути книгу\nдо [DueDate]. Бібліотека."|
+
+    floating note right: ✅ Кінцева подія: Успіх
+    stop
+  endif
+endif
+
+@enduml
